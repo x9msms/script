@@ -57,27 +57,25 @@ getgenv()._acKillConn = LocalPlayer.CharacterAdded:Connect(function(c)
 end)
 
 -- ============================================================
--- Lupin Auto — Noclip + Hide v3
+-- Lupin Auto — Noclip + Hide v3 (Full Body Check)
 -- ============================================================
 
 local Players    = game:GetService("Players")
-local RunService = game:GetService("RunService")
 
 local player = Players:GetPlayers()[1]
 
 -- =========================
 -- CONFIG
 -- =========================
-local THREAT_DISTANCE          = 45
-local TP_COOLDOWN              = 1
-local FIRE_COOLDOWN            = 0.3
-local BUSY_TIMEOUT             = 15
-local HIDE_CHECK_INTERVAL      = 0.15
-local WALL_PENETRATION_SPEED   = 20
-local INSIDE_THRESHOLD         = 5    -- studs จากจุดเริ่มถือว่าอยู่ในกำแพง
-local NOCLIP_SPEED             = 40   -- studs/s ตอนบินไปเป้า
-local NOCLIP_ARRIVE_DIST       = 8    -- หยุดตอนใกล้เป้าเท่านี้
-local NOCLIP_TICK              = 0.1
+local THREAT_DISTANCE        = 45
+local TP_COOLDOWN            = 1
+local FIRE_COOLDOWN          = 0.3
+local BUSY_TIMEOUT           = 15
+local HIDE_CHECK_INTERVAL    = 0.15
+local WALL_PENETRATION_SPEED = 20
+local NOCLIP_SPEED           = 40
+local NOCLIP_ARRIVE_DIST     = 8
+local NOCLIP_TICK            = 0.1
 
 -- =========================
 -- STATE
@@ -90,7 +88,6 @@ local busyStartTime = 0
 local isEvading     = false
 local hideActive    = false
 local hideParts     = {}
-local hideStartPos  = nil
 
 -- =========================
 -- HELPERS
@@ -138,10 +135,10 @@ end
 local function setBodyVel(root, vel)
     local bv = root:FindFirstChild("_NoclipBV")
     if not bv then
-        bv           = Instance.new("BodyVelocity")
-        bv.Name      = "_NoclipBV"
-        bv.MaxForce  = Vector3.new(math.huge, math.huge, math.huge)
-        bv.Parent    = root
+        bv          = Instance.new("BodyVelocity")
+        bv.Name     = "_NoclipBV"
+        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bv.Parent   = root
     end
     bv.Velocity = vel
 end
@@ -203,16 +200,45 @@ local function isMonsterChasingMe()
 end
 
 -- =========================
+-- WALL CONTAINMENT CHECK
+-- true = ทั้งตัวอยู่ในกำแพงแล้ว
+-- =========================
+local function isFullyInsideWall(char, root)
+    local params = OverlapParams.new()
+    params.FilterDescendantsInstances = {char}
+    params.FilterType = Enum.RaycastFilterType.Exclude
+
+    -- root ต้องอยู่ในก่อน
+    if #workspace:GetPartsInPart(root, params) == 0 then
+        return false
+    end
+
+    -- เช็ค head + torso ด้วย
+    local head  = char:FindFirstChild("Head")
+    local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+
+    for _, part in ipairs({head, torso}) do
+        if part and part:IsA("BasePart") then
+            if #workspace:GetPartsInPart(part, params) == 0 then
+                return false
+            end
+        end
+    end
+
+    return true
+end
+
+-- =========================
 -- HIDE IN WALL v3
--- เปิด noclip + force CanCollide=false ทุก tick
--- push กลับเข้าถ้าหลุดออก
--- ออกแค่ตอนมอนเปลี่ยนเป้า หรือ timeout 45s
+-- push เข้าจนทั้งตัวในกำแพง → หยุด
+-- force CanCollide=false ทุก tick
+-- push กลับถ้าหลุดออก
+-- ออกแค่ตอนมอนเปลี่ยนเป้า หรือ timeout
 -- =========================
 local function enableHide(char, root)
     if hideActive then return end
-    hideActive   = true
-    hideStartPos = root.Position
-    hideParts    = {}
+    hideActive = true
+    hideParts  = {}
     for _, part in pairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
             hideParts[part] = part.CanCollide
@@ -239,8 +265,7 @@ local function disableHide(root)
     for part, canCollide in pairs(hideParts) do
         if part and part.Parent then part.CanCollide = canCollide end
     end
-    hideParts    = {}
-    hideStartPos = nil
+    hideParts = {}
     print("✅ disableHide — noclip OFF")
 end
 
@@ -251,11 +276,10 @@ local function hideInWall()
     local _, monster, dist = isMonsterChasingMe()
     if not monster then return end
 
-    print("⚠️ มอนไล่! ระยะ:", dist, "-> เข้ากำแพง + ค้างอยู่")
+    print("⚠️ มอนไล่! ระยะ:", dist, "-> เข้ากำแพง")
 
     enableHide(char, root)
 
-    -- ทิศหนี — ตรงข้ามมอน
     local monRoot   = monster:FindFirstChild("HumanoidRootPart")
     local escapeDir = Vector3.new(0, 0, 1)
     if monRoot then
@@ -269,7 +293,7 @@ local function hideInWall()
         task.wait(HIDE_CHECK_INTERVAL)
         hideWait += HIDE_CHECK_INTERVAL
 
-        -- force CanCollide=false ทุก tick ป้องกัน AC กลับมา
+        -- force CanCollide=false ทุก tick — AC กลับมาไม่ได้
         for part in pairs(hideParts) do
             if part and part.Parent then
                 part.CanCollide = false
@@ -288,11 +312,14 @@ local function hideInWall()
             break
         end
 
-        -- เช็คตำแหน่ง → push กลับถ้าหลุดออก
+        -- เช็คทั้งตัวอยู่ในกำแพงหรือยัง
         local bv = root:FindFirstChild("HideVelocity")
         if bv then
-            local inWall = hideStartPos and (root.Position - hideStartPos).Magnitude >= INSIDE_THRESHOLD
-            bv.Velocity  = inWall and Vector3.zero or (escapeDir * WALL_PENETRATION_SPEED)
+            if isFullyInsideWall(char, root) then
+                bv.Velocity = Vector3.zero
+            else
+                bv.Velocity = escapeDir * WALL_PENETRATION_SPEED
+            end
         end
     end
 
@@ -392,7 +419,7 @@ end
 
 -- =========================
 -- NOCLIP MOVE
--- บินตรงไปเป้า เช็คมอนทุก tick
+-- บินตรงเป้า เช็คมอนทุก tick
 -- returns: "reached" | "threat" | "changed" | "fail"
 -- =========================
 local function moveToTarget(target)
@@ -522,7 +549,6 @@ while true do
 
     if isBusy or isEvading then continue end
 
-    -- generator ครบ → elevator
     if allGeneratorsCompleted() then
         print("🎉 Generator ครบ -> Elevator")
         local elevator = getElevator()
@@ -536,7 +562,6 @@ while true do
         continue
     end
 
-    -- หา generator ใกล้สุด
     local generator = getClosestGenerator()
     if not generator then task.wait(1); continue end
     if currentTarget == generator and isBusy then continue end
@@ -553,7 +578,6 @@ while true do
         continue
     end
 
-    -- fire prompt จนกว่า completed
     local stats     = generator:FindFirstChild("Stats")
     local completed = stats and stats:FindFirstChild("Completed")
 
