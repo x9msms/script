@@ -55,7 +55,7 @@ end)
 
 
 -- ============================================================
--- Lupin Generator + Monster Evasion System (Hide in Wall)
+-- Lupin Generator + Monster Evasion System (Hide in Wall v2)
 -- ============================================================
 
 local PathfindingService = game:GetService("PathfindingService")
@@ -71,7 +71,9 @@ local THREAT_DISTANCE = 45
 local TP_COOLDOWN = 1
 local FIRE_COOLDOWN = 0.3
 local BUSY_TIMEOUT = 15
-local HIDE_CHECK_INTERVAL = 0.2
+local HIDE_CHECK_INTERVAL = 0.15
+local WALL_PENETRATION_SPEED = 20  -- ความเร็วเข้าไปในกำแพง
+local WALL_PENETRATION_DISTANCE = 30  -- ระยะตั้งใจว่าจะเข้าไปเท่าไหร่
 
 -- =========================
 -- STATE
@@ -84,6 +86,7 @@ local busyStartTime = 0
 local isEvading = false
 local hideActive = false
 local hideParts = {}
+local hideStartPos = nil  -- เก็บตำแหน่งเริ่มต้น
 
 -- =========================
 -- HELPERS
@@ -176,7 +179,7 @@ local function isMonsterChasingMe()
 end
 
 -- =========================
--- HIDE IN WALL SYSTEM
+-- HIDE IN WALL SYSTEM (v2 - Stop when inside)
 -- =========================
 local function enableHide()
     if hideActive then return end
@@ -185,7 +188,9 @@ local function enableHide()
     local char, _, root = getCharacter()
     if not char or not root then return end
 
-    print("🪨 ซ่อนตัวในกำแพง - รอจนกว่ามอนเปลี่ยนเป้า")
+    print("🪨 ซ่อนตัวในกำแพง - เ��้าไป แล้วหยุด")
+
+    hideStartPos = root.Position
 
     -- ปิด CanCollide เพื่อให้เข้าไปได้
     hideParts = {}
@@ -227,6 +232,19 @@ local function disableHide()
         end
     end
     hideParts = {}
+    hideStartPos = nil
+end
+
+-- เช็คว่าตัวเข้าไปในกำแพงแล้วหรือยัง (ตำแหน่งไม่เปลี่ยนหรือเปลี่ยนแบบช้ามาก)
+local function isInsideWall()
+    local char, _, root = getCharacter()
+    if not root or not hideStartPos then return false end
+
+    local currentPos = root.Position
+    local distFromStart = distance(hideStartPos, currentPos)
+
+    -- ถ้าเข้าไปได้ > 5 studs แล้ว ถือว่าเข้าแล้ว
+    return distFromStart > 5
 end
 
 -- หนีเข้าไปในกำแพงและรอให้มอนเปลี่ยนเป้า
@@ -253,15 +271,21 @@ local function hideInWall()
         escapeDir = (myPos - monRoot.Position).Unit
     end
 
-    -- เข้าไปในกำแพง
-    local hidePos = myPos + escapeDir * 50
-    humanoid:MoveTo(hidePos)
+    -- เริ่มเข้าไปในกำแพง
+    print("📍 เริ่มเข้าจากตำแหน่ง:", hideStartPos)
 
-    -- รอจนกว่ามอนจะเปลี่ยนเป้า (ChasingValue เปลี่ยน)
     local hideWaitTime = 0
+    local alreadyInWall = false
+
     while hideActive do
         task.wait(HIDE_CHECK_INTERVAL)
         hideWaitTime = hideWaitTime + HIDE_CHECK_INTERVAL
+
+        -- เช็คว่าเข้าไปในกำแพงแล้วหรือยัง
+        if not alreadyInWall and isInsideWall() then
+            alreadyInWall = true
+            print("🏠 เข้าไปในกำแพงแล้ว! หยุดเข้าต่อ -> รอจนกว่ามอนเปลี่ยนเป้า")
+        end
 
         local isChasingNow, monsterNow = isMonsterChasingMe()
 
@@ -272,17 +296,25 @@ local function hideInWall()
             return
         end
 
-        -- ถ้ารอนานเกินไป (30 วิ) → ออกมาหลักฐาน
-        if hideWaitTime > 30 then
-            print("⏱️ รอนาน 30 วิแล้ว -> ออกจากกำแพง")
+        -- ถ้ารอนานเกินไป (45 วิ) → ออกมาหลักฐาน
+        if hideWaitTime > 45 then
+            print("⏱️ รอนาน 45 วิแล้ว -> ออกจากกำแพง")
             disableHide()
             return
         end
 
-        -- ยังคงเข้าไปให้ลึกขึ้น
-        if root and root:FindFirstChild("HideVelocity") then
-            local bodyVel = root:FindFirstChild("HideVelocity")
-            bodyVel.Velocity = escapeDir * 15
+        -- ถ้าเข้าไปแล้ว → หยุด BodyVelocity (ให้เป็นศูนย์)
+        if alreadyInWall then
+            if root and root:FindFirstChild("HideVelocity") then
+                local bodyVel = root:FindFirstChild("HideVelocity")
+                bodyVel.Velocity = Vector3.zero
+            end
+        else
+            -- ยังคงเข้าไปให้ลึกขึ้น
+            if root and root:FindFirstChild("HideVelocity") then
+                local bodyVel = root:FindFirstChild("HideVelocity")
+                bodyVel.Velocity = escapeDir * WALL_PENETRATION_SPEED
+            end
         end
     end
 end
