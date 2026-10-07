@@ -45,22 +45,17 @@ end
 local LocalPlayer = game.Players.LocalPlayer
 
 if LocalPlayer.Character then
-
     killAC(LocalPlayer.Character)
-
 end
 
 getgenv()._acKillConn = LocalPlayer.CharacterAdded:Connect(function(c)
-
     task.wait(1)
-
     killAC(c)
-
 end)
 
 
 -- ============================================================
--- Lupin Generator + Monster Evasion System (PRO NOCLIP)
+-- Lupin Generator + Monster Evasion System (Hide in Wall)
 -- ============================================================
 
 local PathfindingService = game:GetService("PathfindingService")
@@ -73,12 +68,10 @@ local player = Players:GetPlayers()[1]
 -- CONFIG
 -- =========================
 local THREAT_DISTANCE = 45
-local CHECK_MONSTER_INTERVAL = 0.3
 local TP_COOLDOWN = 1
 local FIRE_COOLDOWN = 0.3
 local BUSY_TIMEOUT = 15
-local NOCLIP_CHECK_INTERVAL = 0.1
-local NOCLIP_SPEED = 25
+local HIDE_CHECK_INTERVAL = 0.2
 
 -- =========================
 -- STATE
@@ -88,10 +81,9 @@ local currentTarget = nil
 local lastTpTime = 0
 local lastFireTime = 0
 local busyStartTime = 0
-local lastMonsterCheck = 0
 local isEvading = false
-local noclipActive = false
-local noclipParts = {}
+local hideActive = false
+local hideParts = {}
 
 -- =========================
 -- HELPERS
@@ -184,61 +176,61 @@ local function isMonsterChasingMe()
 end
 
 -- =========================
--- PRO NOCLIP SYSTEM
+-- HIDE IN WALL SYSTEM
 -- =========================
-local function enableProNoclip()
-    if noclipActive then return end
-    noclipActive = true
+local function enableHide()
+    if hideActive then return end
+    hideActive = true
 
     local char, _, root = getCharacter()
     if not char or not root then return end
 
-    print("🚀 PRO NOCLIP เปิด")
+    print("🪨 ซ่อนตัวในกำแพง - รอจนกว่ามอนเปลี่ยนเป้า")
 
-    -- ปิด CanCollide ทั้งตัว
-    noclipParts = {}
+    -- ปิด CanCollide เพื่อให้เข้าไปได้
+    hideParts = {}
     for _, part in pairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
-            noclipParts[part] = part.CanCollide
+            hideParts[part] = part.CanCollide
             part.CanCollide = false
         end
     end
 
-    -- ใส่ BodyVelocity ให้ root
-    if not root:FindFirstChild("NoclipVelocity") then
+    -- ใส่ BodyVelocity ให้เข้าไปในกำแพง
+    if not root:FindFirstChild("HideVelocity") then
         local bodyVel = Instance.new("BodyVelocity")
-        bodyVel.Name = "NoclipVelocity"
+        bodyVel.Name = "HideVelocity"
         bodyVel.Velocity = Vector3.zero
         bodyVel.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
         bodyVel.Parent = root
     end
 end
 
-local function disableProNoclip()
-    if not noclipActive then return end
-    noclipActive = false
+local function disableHide()
+    if not hideActive then return end
+    hideActive = false
 
-    print("✅ PRO NOCLIP ปิด")
+    print("✅ ออกจากกำแพง")
 
     local char, _, root = getCharacter()
 
     -- ลบ BodyVelocity
     if root then
-        local bodyVel = root:FindFirstChild("NoclipVelocity")
+        local bodyVel = root:FindFirstChild("HideVelocity")
         if bodyVel then bodyVel:Destroy() end
     end
 
     -- คืนค่า CanCollide
-    for part, canCollide in pairs(noclipParts) do
+    for part, canCollide in pairs(hideParts) do
         if part and part.Parent then
             part.CanCollide = canCollide
         end
     end
-    noclipParts = {}
+    hideParts = {}
 end
 
--- หนีเข้าไปในกำแพง (Pro Version)
-local function escapeIntoWallPro()
+-- หนีเข้าไปในกำแพงและรอให้มอนเปลี่ยนเป้า
+local function hideInWall()
     local char, humanoid, root = getCharacter()
     if not char or not root or not humanoid then
         return
@@ -249,9 +241,9 @@ local function escapeIntoWallPro()
         return
     end
 
-    print("⚠️ มอนไล่มา! ระยะ:", dist, "-> หนีเข้าไปในกำแพง")
+    print("⚠️ มอนไล่มา! ระยะ:", dist, "-> เข้าไปในกำแพง")
 
-    enableProNoclip()
+    enableHide()
 
     local myPos = root.Position
     local monRoot = monster:FindFirstChild("HumanoidRootPart")
@@ -261,31 +253,36 @@ local function escapeIntoWallPro()
         escapeDir = (myPos - monRoot.Position).Unit
     end
 
-    local safeTime = 0
-    local safeThreshold = 2
+    -- เข้าไปในกำแพง
+    local hidePos = myPos + escapeDir * 50
+    humanoid:MoveTo(hidePos)
 
-    while noclipActive do
-        task.wait(NOCLIP_CHECK_INTERVAL)
+    -- รอจนกว่ามอนจะเปลี่ยนเป้า (ChasingValue เปลี่ยน)
+    local hideWaitTime = 0
+    while hideActive do
+        task.wait(HIDE_CHECK_INTERVAL)
+        hideWaitTime = hideWaitTime + HIDE_CHECK_INTERVAL
 
-        local isChasingNow, _, distNow = isMonsterChasingMe()
+        local isChasingNow, monsterNow = isMonsterChasingMe()
 
-        if not isChasingNow or distNow > THREAT_DISTANCE then
-            safeTime = safeTime + NOCLIP_CHECK_INTERVAL
-        else
-            safeTime = 0
-        end
-
-        if safeTime >= safeThreshold then
-            print("✅ ปลอดภัย " .. safeThreshold .. "วิแล้ว -> ออกจากกำแพง")
-            disableProNoclip()
+        -- ถ้ามอนไม่ไล่เราแล้ว → ออกจากกำแพง
+        if not isChasingNow then
+            print("✅ มอนเลิกไล่แล้ว (หลังจาก " .. hideWaitTime .. " วิ) -> ออกจากกำแพง")
+            disableHide()
             return
         end
 
-        if root then
-            local bodyVel = root:FindFirstChild("NoclipVelocity")
-            if bodyVel then
-                bodyVel.Velocity = escapeDir * NOCLIP_SPEED
-            end
+        -- ถ้ารอนานเกินไป (30 วิ) → ออกมาหลักฐาน
+        if hideWaitTime > 30 then
+            print("⏱️ รอนาน 30 วิแล้ว -> ออกจากกำแพง")
+            disableHide()
+            return
+        end
+
+        -- ยังคงเข้าไปให้ลึกขึ้น
+        if root and root:FindFirstChild("HideVelocity") then
+            local bodyVel = root:FindFirstChild("HideVelocity")
+            bodyVel.Velocity = escapeDir * 15
         end
     end
 end
@@ -437,10 +434,10 @@ local function moveToTarget(target, label)
     -- 🔴 เช็คมอนก่อนเดิน
     local isChasingNow = isMonsterChasingMe()
     if isChasingNow then
-        print("⚠️ มอนมาแล้ว! ปล่อย + หนี")
+        print("⚠️ มอนมาแล้ว! ปล่อย + ซ่อนตัว")
         stopInteracting(currentTarget)
         isEvading = true
-        escapeIntoWallPro()
+        hideInWall()
         isEvading = false
         return "threat"
     end
@@ -475,10 +472,10 @@ local function moveToTarget(target, label)
         -- 🔴 เช็คมอนขณะเดิน
         local isChasingNow2 = isMonsterChasingMe()
         if isChasingNow2 then
-            print("⚠️ มอนตามมากลางทาง! ปล่อย + หนี")
+            print("⚠️ มอนตามมากลางทาง! ปล่อย + ซ่อนตัว")
             stopInteracting(currentTarget)
             isEvading = true
-            escapeIntoWallPro()
+            hideInWall()
             isEvading = false
             return "threat"
         end
@@ -520,10 +517,10 @@ local function moveToTarget(target, label)
             if isChasingNow3 then
                 conn:Disconnect()
                 humanoid:MoveTo(root.Position)
-                print("⚠️ มอนตามมา -> หยุด + หนี")
+                print("⚠️ มอนตามมา -> หยุด + ซ่อนตัว")
                 stopInteracting(currentTarget)
                 isEvading = true
-                escapeIntoWallPro()
+                hideInWall()
                 isEvading = false
                 return "threat"
             end
@@ -579,9 +576,9 @@ local function fireGeneratorPrompt(generator)
     -- 🔴 เช็คมอนก่อน fire
     local isChasingNow = isMonsterChasingMe()
     if isChasingNow then
-        print("⚠️ มอนมา -> หยุด fire + หนี")
+        print("⚠️ มอนมา -> หยุด fire + ซ่อนตัว")
         isEvading = true
-        escapeIntoWallPro()
+        hideInWall()
         isEvading = false
         return false
     end
@@ -714,10 +711,10 @@ while true do
             -- 🔴 เช็คมอนก่อน fire
             local isChasingNow = isMonsterChasingMe()
             if isChasingNow then
-                print("⚠️ มอนมา -> หยุด fire + หนี")
+                print("⚠️ มอนมา -> หยุด fire + ซ่อนตัว")
                 stopInteracting(generator)
                 isEvading = true
-                escapeIntoWallPro()
+                hideInWall()
                 isEvading = false
                 break
             end
