@@ -1,6 +1,9 @@
+-- ============================================================
+-- AC Kill
+-- ============================================================
 local function killAC(char)
     local Humanoid = char:WaitForChild("Humanoid", 10)
-    local HRP = char:WaitForChild("HumanoidRootPart", 10)
+    local HRP      = char:WaitForChild("HumanoidRootPart", 10)
     if not Humanoid or not HRP then return end
 
     local killed = 0
@@ -13,7 +16,7 @@ local function killAC(char)
         local ok, conns = pcall(getconnections, sig)
         if ok then
             for _, c in ipairs(conns) do
-                if pcall(function() c:Disable() end) then killed = killed + 1 end
+                if pcall(function() c:Disable() end) then killed += 1 end
             end
         end
     end
@@ -21,45 +24,43 @@ local function killAC(char)
     local ok, conns = pcall(getconnections, char.DescendantAdded)
     if ok then
         for _, c in ipairs(conns) do
-            local fn = c.Function
+            local fn     = c.Function
             local consts = {}
             pcall(function()
                 local k = debug.getconstants(fn)
-                if k then for _, v in pairs(k) do if type(v) == "string" then table.insert(consts, v) end end end
+                if k then for _, v in pairs(k) do
+                    if type(v) == "string" then table.insert(consts, v) end
+                end end
             end)
             local isAC = false
             for _, v in ipairs(consts) do
                 if v == "BodyGyro" or v == "BodyVelocity" then isAC = true end
             end
             if isAC then
-                if pcall(function() c:Disable() end) then killed = killed + 1 end
+                if pcall(function() c:Disable() end) then killed += 1 end
             else
                 pcall(function() c:Enable() end)
             end
         end
     end
-    print(("[AC-kill] %d killed"):format(killed))
 
+    print(("[AC-kill] %d killed"):format(killed))
 end
 
 local LocalPlayer = game.Players.LocalPlayer
 
-if LocalPlayer.Character then
-    killAC(LocalPlayer.Character)
-end
+if LocalPlayer.Character then killAC(LocalPlayer.Character) end
 
 getgenv()._acKillConn = LocalPlayer.CharacterAdded:Connect(function(c)
     task.wait(1)
     killAC(c)
 end)
 
-
 -- ============================================================
--- Lupin Generator + Monster Evasion System (Hide in Wall v2)
+-- Lupin Auto — Noclip + Hide v3
 -- ============================================================
 
-local PathfindingService = game:GetService("PathfindingService")
-local Players = game:GetService("Players")
+local Players    = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local player = Players:GetPlayers()[1]
@@ -67,26 +68,29 @@ local player = Players:GetPlayers()[1]
 -- =========================
 -- CONFIG
 -- =========================
-local THREAT_DISTANCE = 45
-local TP_COOLDOWN = 1
-local FIRE_COOLDOWN = 0.3
-local BUSY_TIMEOUT = 15
-local HIDE_CHECK_INTERVAL = 0.15
-local WALL_PENETRATION_SPEED = 20  -- ความเร็วเข้าไปในกำแพง
-local WALL_PENETRATION_DISTANCE = 30  -- ระยะตั้งใจว่าจะเข้าไปเท่าไหร่
+local THREAT_DISTANCE          = 45
+local TP_COOLDOWN              = 1
+local FIRE_COOLDOWN            = 0.3
+local BUSY_TIMEOUT             = 15
+local HIDE_CHECK_INTERVAL      = 0.15
+local WALL_PENETRATION_SPEED   = 20
+local INSIDE_THRESHOLD         = 5    -- studs จากจุดเริ่มถือว่าอยู่ในกำแพง
+local NOCLIP_SPEED             = 40   -- studs/s ตอนบินไปเป้า
+local NOCLIP_ARRIVE_DIST       = 8    -- หยุดตอนใกล้เป้าเท่านี้
+local NOCLIP_TICK              = 0.1
 
 -- =========================
 -- STATE
 -- =========================
-local isBusy = false
+local isBusy        = false
 local currentTarget = nil
-local lastTpTime = 0
-local lastFireTime = 0
+local lastTpTime    = 0
+local lastFireTime  = 0
 local busyStartTime = 0
-local isEvading = false
-local hideActive = false
-local hideParts = {}
-local hideStartPos = nil  -- เก็บตำแหน่งเริ่มต้น
+local isEvading     = false
+local hideActive    = false
+local hideParts     = {}
+local hideStartPos  = nil
 
 -- =========================
 -- HELPERS
@@ -94,29 +98,65 @@ local hideStartPos = nil  -- เก็บตำแหน่งเริ่มต
 local function getCharacter()
     local char = player and player.Character
     if not char then return end
-
     local humanoid = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindFirstChild("HumanoidRootPart")
-
+    local root     = char:FindFirstChild("HumanoidRootPart")
     return char, humanoid, root
 end
 
 local function getGeneratorPosition(generator)
-    if generator.PrimaryPart then
-        return generator.PrimaryPart.Position
-    end
+    if generator.PrimaryPart then return generator.PrimaryPart.Position end
     return generator:GetPivot().Position
+end
+
+local function distance(a, b)
+    if not a or not b then return math.huge end
+    return (a - b).Magnitude
+end
+
+-- =========================
+-- NOCLIP HELPERS (movement)
+-- =========================
+local _moveNoclipParts = {}
+
+local function noclipEnable(char)
+    _moveNoclipParts = {}
+    for _, p in pairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then
+            _moveNoclipParts[p] = p.CanCollide
+            p.CanCollide = false
+        end
+    end
+end
+
+local function noclipDisable()
+    for p, v in pairs(_moveNoclipParts) do
+        if p and p.Parent then p.CanCollide = v end
+    end
+    _moveNoclipParts = {}
+end
+
+local function setBodyVel(root, vel)
+    local bv = root:FindFirstChild("_NoclipBV")
+    if not bv then
+        bv           = Instance.new("BodyVelocity")
+        bv.Name      = "_NoclipBV"
+        bv.MaxForce  = Vector3.new(math.huge, math.huge, math.huge)
+        bv.Parent    = root
+    end
+    bv.Velocity = vel
+end
+
+local function clearBodyVel(root)
+    local bv = root:FindFirstChild("_NoclipBV")
+    if bv then bv:Destroy() end
 end
 
 -- =========================
 -- MONSTER DETECTION
 -- =========================
 local function getMyModel()
-    local char, _, root = getCharacter()
-    if char and char.Parent then
-        return char
-    end
-
+    local char = player and player.Character
+    if char and char.Parent then return char end
     local inGame = workspace:FindFirstChild("InGamePlayers")
     if inGame then
         for _, obj in pairs(inGame:GetChildren()) do
@@ -125,28 +165,15 @@ local function getMyModel()
             end
         end
     end
-
     return nil
 end
 
-local function distance(a, b)
-    if not a or not b then
-        return math.huge
-    end
-    return (a - b).Magnitude
-end
-
--- 🔴 เช็คว่ามอนกำลังเล็งเราไหม
 local function isMonsterChasingMe()
     local myModel = getMyModel()
-    if not myModel then
-        return false, nil
-    end
+    if not myModel then return false, nil, nil end
 
     local currentRoom = workspace:FindFirstChild("CurrentRoom")
-    if not currentRoom then
-        return false, nil
-    end
+    if not currentRoom then return false, nil, nil end
 
     for _, map in pairs(currentRoom:GetChildren()) do
         if map:IsA("Model") or map:IsA("Folder") then
@@ -154,17 +181,15 @@ local function isMonsterChasingMe()
             if monstersFolder then
                 for _, monster in pairs(monstersFolder:GetChildren()) do
                     if monster:IsA("Model") then
-                        local chasingValue = monster:FindFirstChild("ChasingValue")
-                        if chasingValue and chasingValue:IsA("ObjectValue") then
-                            if chasingValue.Value == myModel then
-                                local monRoot = monster:FindFirstChild("HumanoidRootPart")
-                                if monRoot then
-                                    local myRoot = myModel:FindFirstChild("HumanoidRootPart")
-                                    if myRoot then
-                                        local dist = distance(myRoot.Position, monRoot.Position)
-                                        if dist < THREAT_DISTANCE then
-                                            return true, monster, dist
-                                        end
+                        local cv = monster:FindFirstChild("ChasingValue")
+                        if cv and cv:IsA("ObjectValue") and cv.Value == myModel then
+                            local monRoot = monster:FindFirstChild("HumanoidRootPart")
+                            if monRoot then
+                                local myRoot = myModel:FindFirstChild("HumanoidRootPart")
+                                if myRoot then
+                                    local dist = distance(myRoot.Position, monRoot.Position)
+                                    if dist < THREAT_DISTANCE then
+                                        return true, monster, dist
                                     end
                                 end
                             end
@@ -174,231 +199,162 @@ local function isMonsterChasingMe()
             end
         end
     end
-
     return false, nil, nil
 end
 
 -- =========================
--- HIDE IN WALL SYSTEM (v2 - Stop when inside)
+-- HIDE IN WALL v3
+-- เปิด noclip + force CanCollide=false ทุก tick
+-- push กลับเข้าถ้าหลุดออก
+-- ออกแค่ตอนมอนเปลี่ยนเป้า หรือ timeout 45s
 -- =========================
-local function enableHide()
+local function enableHide(char, root)
     if hideActive then return end
-    hideActive = true
-
-    local char, _, root = getCharacter()
-    if not char or not root then return end
-
-    print("🪨 ซ่อนตัวในกำแพง - เ��้าไป แล้วหยุด")
-
+    hideActive   = true
     hideStartPos = root.Position
-
-    -- ปิด CanCollide เพื่อให้เข้าไปได้
-    hideParts = {}
+    hideParts    = {}
     for _, part in pairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
             hideParts[part] = part.CanCollide
             part.CanCollide = false
         end
     end
-
-    -- ใส่ BodyVelocity ให้เข้าไปในกำแพง
     if not root:FindFirstChild("HideVelocity") then
-        local bodyVel = Instance.new("BodyVelocity")
-        bodyVel.Name = "HideVelocity"
-        bodyVel.Velocity = Vector3.zero
-        bodyVel.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-        bodyVel.Parent = root
+        local bv       = Instance.new("BodyVelocity")
+        bv.Name        = "HideVelocity"
+        bv.Velocity    = Vector3.zero
+        bv.MaxForce    = Vector3.new(math.huge, math.huge, math.huge)
+        bv.Parent      = root
     end
+    print("🪨 enableHide — noclip ON")
 end
 
-local function disableHide()
+local function disableHide(root)
     if not hideActive then return end
     hideActive = false
-
-    print("✅ ออกจากกำแพง")
-
-    local char, _, root = getCharacter()
-
-    -- ลบ BodyVelocity
     if root then
-        local bodyVel = root:FindFirstChild("HideVelocity")
-        if bodyVel then bodyVel:Destroy() end
+        local bv = root:FindFirstChild("HideVelocity")
+        if bv then bv:Destroy() end
     end
-
-    -- คืนค่า CanCollide
     for part, canCollide in pairs(hideParts) do
-        if part and part.Parent then
-            part.CanCollide = canCollide
-        end
+        if part and part.Parent then part.CanCollide = canCollide end
     end
-    hideParts = {}
+    hideParts    = {}
     hideStartPos = nil
+    print("✅ disableHide — noclip OFF")
 end
 
--- เช็คว่าตัวเข้าไปในกำแพงแล้วหรือยัง (ตำแหน่งไม่เปลี่ยนหรือเปลี่ยนแบบช้ามาก)
-local function isInsideWall()
-    local char, _, root = getCharacter()
-    if not root or not hideStartPos then return false end
-
-    local currentPos = root.Position
-    local distFromStart = distance(hideStartPos, currentPos)
-
-    -- ถ้าเข้าไปได้ > 5 studs แล้ว ถือว่าเข้าแล้ว
-    return distFromStart > 5
-end
-
--- หนีเข้าไปในกำแพงและรอให้มอนเปลี่ยนเป้า
 local function hideInWall()
     local char, humanoid, root = getCharacter()
-    if not char or not root or not humanoid then
-        return
-    end
+    if not char or not root or not humanoid then return end
 
     local _, monster, dist = isMonsterChasingMe()
-    if not monster then
-        return
-    end
+    if not monster then return end
 
-    print("⚠️ มอนไล่มา! ระยะ:", dist, "-> เข้าไปในกำแพง")
+    print("⚠️ มอนไล่! ระยะ:", dist, "-> เข้ากำแพง + ค้างอยู่")
 
-    enableHide()
+    enableHide(char, root)
 
-    local myPos = root.Position
-    local monRoot = monster:FindFirstChild("HumanoidRootPart")
-
+    -- ทิศหนี — ตรงข้ามมอน
+    local monRoot   = monster:FindFirstChild("HumanoidRootPart")
     local escapeDir = Vector3.new(0, 0, 1)
     if monRoot then
-        escapeDir = (myPos - monRoot.Position).Unit
+        local d = root.Position - monRoot.Position
+        if d.Magnitude > 0 then escapeDir = d.Unit end
     end
 
-    -- เริ่มเข้าไปในกำแพง
-    print("📍 เริ่มเข้าจากตำแหน่ง:", hideStartPos)
-
-    local hideWaitTime = 0
-    local alreadyInWall = false
+    local hideWait = 0
 
     while hideActive do
         task.wait(HIDE_CHECK_INTERVAL)
-        hideWaitTime = hideWaitTime + HIDE_CHECK_INTERVAL
+        hideWait += HIDE_CHECK_INTERVAL
 
-        -- เช็คว่าเข้าไปในกำแพงแล้วหรือยัง
-        if not alreadyInWall and isInsideWall() then
-            alreadyInWall = true
-            print("🏠 เข้าไปในกำแพงแล้ว! หยุดเข้าต่อ -> รอจนกว่ามอนเปลี่ยนเป้า")
-        end
-
-        local isChasingNow, monsterNow = isMonsterChasingMe()
-
-        -- ถ้ามอนไม่ไล่เราแล้ว → ออกจากกำแพง
-        if not isChasingNow then
-            print("✅ มอนเลิกไล่แล้ว (หลังจาก " .. hideWaitTime .. " วิ) -> ออกจากกำแพง")
-            disableHide()
-            return
-        end
-
-        -- ถ้ารอนานเกินไป (45 วิ) → ออกมาหลักฐาน
-        if hideWaitTime > 45 then
-            print("⏱️ รอนาน 45 วิแล้ว -> ออกจากกำแพง")
-            disableHide()
-            return
-        end
-
-        -- ถ้าเข้าไปแล้ว → หยุด BodyVelocity (ให้เป็นศูนย์)
-        if alreadyInWall then
-            if root and root:FindFirstChild("HideVelocity") then
-                local bodyVel = root:FindFirstChild("HideVelocity")
-                bodyVel.Velocity = Vector3.zero
+        -- force CanCollide=false ทุก tick ป้องกัน AC กลับมา
+        for part in pairs(hideParts) do
+            if part and part.Parent then
+                part.CanCollide = false
             end
-        else
-            -- ยังคงเข้าไปให้ลึกขึ้น
-            if root and root:FindFirstChild("HideVelocity") then
-                local bodyVel = root:FindFirstChild("HideVelocity")
-                bodyVel.Velocity = escapeDir * WALL_PENETRATION_SPEED
-            end
+        end
+
+        -- timeout
+        if hideWait > 45 then
+            print("⏱️ timeout 45s -> ออก")
+            break
+        end
+
+        -- มอนเปลี่ยนเป้าแล้ว → ออก
+        if not isMonsterChasingMe() then
+            print("✅ มอนเปลี่ยนเป้า (" .. string.format("%.1f", hideWait) .. "s) -> ออก")
+            break
+        end
+
+        -- เช็คตำแหน่ง → push กลับถ้าหลุดออก
+        local bv = root:FindFirstChild("HideVelocity")
+        if bv then
+            local inWall = hideStartPos and (root.Position - hideStartPos).Magnitude >= INSIDE_THRESHOLD
+            bv.Velocity  = inWall and Vector3.zero or (escapeDir * WALL_PENETRATION_SPEED)
         end
     end
+
+    disableHide(root)
 end
 
 -- =========================
 -- STOP INTERACTING
 -- =========================
 local function stopInteracting(generator)
-    if not generator or not generator.Parent then
-        return
-    end
-
+    if not generator or not generator.Parent then return end
     local stats = generator:FindFirstChild("Stats")
-    if not stats then
-        return
-    end
-
-    local stopEvent = stats:FindFirstChild("StopInteracting")
-    if stopEvent and stopEvent:IsA("RemoteEvent") then
-        print("🛑 ส่ง StopInteracting ->", generator.Name)
-        pcall(function()
-            stopEvent:FireServer("Stop")
-        end)
+    if not stats then return end
+    local ev = stats:FindFirstChild("StopInteracting")
+    if ev and ev:IsA("RemoteEvent") then
+        pcall(function() ev:FireServer("Stop") end)
     end
 end
 
 -- =========================
--- GENERATOR FUNCTIONS
+-- GENERATOR QUERIES
 -- =========================
 local function getClosestGenerator()
     local _, _, root = getCharacter()
-    local room = workspace:FindFirstChild("CurrentRoom")
-
-    if not root or not room then
-        return nil
-    end
-
-    local closest
-    local minDist = math.huge
-
+    local room       = workspace:FindFirstChild("CurrentRoom")
+    if not root or not room then return nil end
+    local closest, minDist = nil, math.huge
     for _, model in ipairs(room:GetChildren()) do
         if model:IsA("Model") or model:IsA("Folder") then
             local folder = model:FindFirstChild("Generators")
             if folder then
-                for _, generator in ipairs(folder:GetChildren()) do
-                    if generator:IsA("Model") then
-                        local stats = generator:FindFirstChild("Stats")
+                for _, gen in ipairs(folder:GetChildren()) do
+                    if gen:IsA("Model") then
+                        local stats     = gen:FindFirstChild("Stats")
                         local completed = stats and stats:FindFirstChild("Completed")
                         if completed and completed:IsA("BoolValue") and not completed.Value then
-                            local d = (root.Position - getGeneratorPosition(generator)).Magnitude
-                            if d < minDist then
-                                minDist = d
-                                closest = generator
-                            end
+                            local d = (root.Position - getGeneratorPosition(gen)).Magnitude
+                            if d < minDist then minDist = d; closest = gen end
                         end
                     end
                 end
             end
         end
     end
-
     return closest
 end
 
 local function allGeneratorsCompleted()
     local room = workspace:FindFirstChild("CurrentRoom")
-    if not room then
-        return false
-    end
-
+    if not room then return false end
     local foundAny = false
     for _, model in ipairs(room:GetChildren()) do
         if model:IsA("Model") or model:IsA("Folder") then
             local folder = model:FindFirstChild("Generators")
             if folder then
-                for _, generator in ipairs(folder:GetChildren()) do
-                    if generator:IsA("Model") then
-                        local stats = generator:FindFirstChild("Stats")
+                for _, gen in ipairs(folder:GetChildren()) do
+                    if gen:IsA("Model") then
+                        local stats     = gen:FindFirstChild("Stats")
                         local completed = stats and stats:FindFirstChild("Completed")
                         if completed and completed:IsA("BoolValue") then
                             foundAny = true
-                            if not completed.Value then
-                                return false
-                            end
+                            if not completed.Value then return false end
                         end
                     end
                 end
@@ -409,173 +365,91 @@ local function allGeneratorsCompleted()
 end
 
 local function isGeneratorCompleted(generator)
-    if not generator or not generator.Parent then
-        return true
-    end
-    local stats = generator:FindFirstChild("Stats")
+    if not generator or not generator.Parent then return true end
+    local stats     = generator:FindFirstChild("Stats")
     local completed = stats and stats:FindFirstChild("Completed")
-    if completed and completed:IsA("BoolValue") then
-        return completed.Value
-    end
+    if completed and completed:IsA("BoolValue") then return completed.Value end
     return false
 end
 
 -- =========================
--- PATHFINDING + MOVEMENT
+-- TELEPORT ARRIVE
 -- =========================
-local function teleportInFront(target, distance)
-    local _, humanoid, root = getCharacter()
-    if not humanoid or not root then
-        return false
-    end
-
-    if tick() - lastTpTime < TP_COOLDOWN then
-        return false
-    end
+local function teleportInFront(target, dist)
+    local _, _, root = getCharacter()
+    if not root then return false end
+    if tick() - lastTpTime < TP_COOLDOWN then return false end
     lastTpTime = tick()
-
-    distance = distance or 5
-
-    local ok, pivot = pcall(function()
-        return target:GetPivot()
-    end)
-
-    if not ok or not pivot then
-        return false
-    end
-
-    local dir = (pivot.Position - root.Position)
-    if dir.Magnitude > 0 then
-        dir = dir.Unit
-    else
-        dir = pivot.LookVector
-    end
-
-    local tpPos = pivot.Position - dir * distance + Vector3.new(0, 3, 0)
-    root.CFrame = CFrame.new(tpPos)
+    dist = dist or 5
+    local ok, pivot = pcall(function() return target:GetPivot() end)
+    if not ok or not pivot then return false end
+    local d = pivot.Position - root.Position
+    d = d.Magnitude > 0 and d.Unit or pivot.LookVector
+    root.CFrame = CFrame.new(pivot.Position - d * dist + Vector3.new(0, 3, 0))
     task.wait(0.2)
     return true
 end
 
-local function moveToTarget(target, label)
-    local _, humanoid, root = getCharacter()
-    if not humanoid or not root then
-        return "fail"
-    end
+-- =========================
+-- NOCLIP MOVE
+-- บินตรงไปเป้า เช็คมอนทุก tick
+-- returns: "reached" | "threat" | "changed" | "fail"
+-- =========================
+local function moveToTarget(target)
+    local char, humanoid, root = getCharacter()
+    if not char or not humanoid or not root then return "fail" end
 
-    -- 🔴 เช็คมอนก่อนเดิน
-    local isChasingNow = isMonsterChasingMe()
-    if isChasingNow then
-        print("⚠️ มอนมาแล้ว! ปล่อย + ซ่อนตัว")
+    if isMonsterChasingMe() then
         stopInteracting(currentTarget)
-        isEvading = true
-        hideInWall()
-        isEvading = false
+        isEvading = true; hideInWall(); isEvading = false
         return "threat"
     end
 
-    local targetPos
-    if typeof(target) == "Vector3" then
-        targetPos = target
-    else
-        targetPos = getGeneratorPosition(target)
+    local function getTargetPos()
+        if typeof(target) == "Vector3" then return target end
+        return getGeneratorPosition(target)
     end
 
-    local path = PathfindingService:CreatePath({
-        AgentRadius = 2,
-        AgentHeight = 5,
-        AgentCanJump = true,
-        AgentJumpHeight = 5,
-        AgentMaxSlope = 80,
-        WaypointSpacing = 8,
-    })
+    noclipEnable(char)
 
-    local pathOk = pcall(function()
-        path:ComputeAsync(root.Position, targetPos)
-    end)
+    while true do
+        task.wait(NOCLIP_TICK)
 
-    if not pathOk or path.Status ~= Enum.PathStatus.Success then
-        return "fail"
-    end
+        -- force noclip ทุก tick ระหว่างบิน
+        for p in pairs(_moveNoclipParts) do
+            if p and p.Parent then p.CanCollide = false end
+        end
 
-    local waypoints = path:GetWaypoints()
-
-    for i = 2, #waypoints do
-        -- 🔴 เช็คมอนขณะเดิน
-        local isChasingNow2 = isMonsterChasingMe()
-        if isChasingNow2 then
-            print("⚠️ มอนตามมากลางทาง! ปล่อย + ซ่อนตัว")
+        if isMonsterChasingMe() then
+            clearBodyVel(root)
+            noclipDisable()
+            humanoid:MoveTo(root.Position)
             stopInteracting(currentTarget)
-            isEvading = true
-            hideInWall()
-            isEvading = false
+            isEvading = true; hideInWall(); isEvading = false
             return "threat"
         end
 
-        -- เช็คเป้าเปลี่ยน
         if typeof(target) ~= "Vector3" and isGeneratorCompleted(target) then
+            clearBodyVel(root)
+            noclipDisable()
+            humanoid:MoveTo(root.Position)
             return "changed"
         end
 
-        -- เช็คระยะ
-        if typeof(target) ~= "Vector3" then
-            local distToTarget = (root.Position - targetPos).Magnitude
-            if distToTarget <= 10 then
-                teleportInFront(target, 5)
-                return "reached"
-            end
+        local targetPos = getTargetPos()
+        local delta     = targetPos - root.Position
+        local dist      = delta.Magnitude
+
+        if dist <= NOCLIP_ARRIVE_DIST then
+            clearBodyVel(root)
+            noclipDisable()
+            humanoid:MoveTo(root.Position)
+            if typeof(target) ~= "Vector3" then teleportInFront(target, 5) end
+            return "reached"
         end
 
-        local wp = waypoints[i]
-        if wp.Action == Enum.PathWaypointAction.Jump then
-            humanoid.Jump = true
-        end
-
-        humanoid:MoveTo(wp.Position)
-
-        local reached = false
-        local conn
-        conn = humanoid.MoveToFinished:Connect(function(ok)
-            reached = ok
-        end)
-
-        local elapsed = 0
-        while not reached and elapsed < 3 do
-            task.wait(0.1)
-            elapsed += 0.1
-
-            -- 🔴 เช็คมอนกลางเดิน
-            local isChasingNow3 = isMonsterChasingMe()
-            if isChasingNow3 then
-                conn:Disconnect()
-                humanoid:MoveTo(root.Position)
-                print("⚠️ มอนตามมา -> หยุด + ซ่อนตัว")
-                stopInteracting(currentTarget)
-                isEvading = true
-                hideInWall()
-                isEvading = false
-                return "threat"
-            end
-
-            if typeof(target) ~= "Vector3" and isGeneratorCompleted(target) then
-                conn:Disconnect()
-                humanoid:MoveTo(root.Position)
-                return "changed"
-            end
-
-            if typeof(target) ~= "Vector3" then
-                local d = (root.Position - targetPos).Magnitude
-                if d <= 10 then
-                    conn:Disconnect()
-                    teleportInFront(target, 5)
-                    return "reached"
-                end
-            end
-        end
-        conn:Disconnect()
+        setBodyVel(root, delta.Unit * NOCLIP_SPEED)
     end
-
-    return "reached"
 end
 
 -- =========================
@@ -585,46 +459,29 @@ local function getAttachmentAndPrompt(generator)
     for _, obj in ipairs(generator:GetDescendants()) do
         if obj:IsA("Attachment") then
             local p = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if p then
-                return obj, p
-            end
+            if p then return obj, p end
         end
     end
     return nil, nil
 end
 
 local function fireGeneratorPrompt(generator)
-    if tick() - lastFireTime < FIRE_COOLDOWN then
-        return false
-    end
+    if tick() - lastFireTime < FIRE_COOLDOWN then return false end
     lastFireTime = tick()
 
     local attachment, prompt = getAttachmentAndPrompt(generator)
+    if not prompt then return false end
 
-    if not prompt then
+    if isMonsterChasingMe() then
+        isEvading = true; hideInWall(); isEvading = false
         return false
     end
-
-    -- 🔴 เช็คมอนก่อน fire
-    local isChasingNow = isMonsterChasingMe()
-    if isChasingNow then
-        print("⚠️ มอนมา -> หยุด fire + ซ่อนตัว")
-        isEvading = true
-        hideInWall()
-        isEvading = false
-        return false
-    end
-
-    local promptPos = attachment and attachment.WorldPosition
-        or getGeneratorPosition(generator)
 
     local _, _, root = getCharacter()
     if root then
-        local dist = (root.Position - promptPos).Magnitude
-        local maxDist = prompt.MaxActivationDistance or 10
-        if dist > maxDist then
-            return false
-        end
+        local promptPos = attachment and attachment.WorldPosition or getGeneratorPosition(generator)
+        local maxDist   = prompt.MaxActivationDistance or 10
+        if (root.Position - promptPos).Magnitude > maxDist then return false end
     end
 
     if prompt.HoldDuration and prompt.HoldDuration > 0 then
@@ -658,96 +515,55 @@ end
 while true do
     task.wait(0.2)
 
-    -- กัน isBusy ค้าง
     if isBusy and (tick() - busyStartTime) > BUSY_TIMEOUT then
         warn("⚠️ isBusy timeout -> reset")
-        isBusy = false
-        currentTarget = nil
+        isBusy = false; currentTarget = nil
     end
 
-    if isBusy or isEvading then
-        continue
-    end
+    if isBusy or isEvading then continue end
 
-    -- 1) Generator ครบ → Elevator
+    -- generator ครบ → elevator
     if allGeneratorsCompleted() then
         print("🎉 Generator ครบ -> Elevator")
-
         local elevator = getElevator()
         if elevator then
-            isBusy = true
-            busyStartTime = tick()
-            currentTarget = elevator
-
-            moveToTarget(elevator, "Elevator")
+            isBusy = true; busyStartTime = tick(); currentTarget = elevator
+            moveToTarget(elevator)
             print("✅ ถึง Elevator")
-
-            isBusy = false
-            currentTarget = nil
+            isBusy = false; currentTarget = nil
         end
-
         task.wait(2)
         continue
     end
 
-    -- 2) หา Generator เป้า
+    -- หา generator ใกล้สุด
     local generator = getClosestGenerator()
-    if not generator then
-        task.wait(1)
-        continue
-    end
-
-    if currentTarget == generator and isBusy then
-        continue
-    end
+    if not generator then task.wait(1); continue end
+    if currentTarget == generator and isBusy then continue end
 
     print("🎯 เป้า:", generator.Name)
+    isBusy = true; busyStartTime = tick(); currentTarget = generator
 
-    isBusy = true
-    busyStartTime = tick()
-    currentTarget = generator
+    local result = moveToTarget(generator)
 
-    local result = moveToTarget(generator, generator.Name)
-
-    if result == "threat" then
-        print("🔁 เหตุขัดขวาง -> หาเป้าใหม่")
-        isBusy = false
-        currentTarget = nil
-        task.wait(0.5)
+    if result ~= "reached" then
+        print("🔁 ->", result)
+        isBusy = false; currentTarget = nil
+        task.wait(result == "fail" and 0.5 or 0.1)
         continue
     end
 
-    if result == "changed" then
-        print("🔁 เป้าเปลี่ยน")
-        isBusy = false
-        currentTarget = nil
-        task.wait(0.1)
-        continue
-    end
-
-    if result == "fail" then
-        isBusy = false
-        currentTarget = nil
-        task.wait(0.5)
-        continue
-    end
-
-    -- 3) Fire prompt จนกว่า Completed = true
-    local stats = generator:FindFirstChild("Stats")
+    -- fire prompt จนกว่า completed
+    local stats     = generator:FindFirstChild("Stats")
     local completed = stats and stats:FindFirstChild("Completed")
 
     if completed and completed:IsA("BoolValue") then
-        print("⏳ Fire prompt ->", generator.Name)
+        print("⏳ Fire ->", generator.Name)
 
         while generator.Parent and not completed.Value do
-            -- 🔴 เช็คมอนก่อน fire
-            local isChasingNow = isMonsterChasingMe()
-            if isChasingNow then
-                print("⚠️ มอนมา -> หยุด fire + ซ่อนตัว")
+            if isMonsterChasingMe() then
                 stopInteracting(generator)
-                isEvading = true
-                hideInWall()
-                isEvading = false
+                isEvading = true; hideInWall(); isEvading = false
                 break
             end
 
@@ -760,14 +576,13 @@ while true do
             end
 
             if not ok then
-                warn("fire ไม่สำเร็จ")
-                moveToTarget(generator, generator.Name)
+                warn("fire ไม่สำเร็จ -> re-approach")
+                moveToTarget(generator)
             end
 
             task.wait(0.3)
         end
     end
 
-    isBusy = false
-    currentTarget = nil
+    isBusy = false; currentTarget = nil
 end
