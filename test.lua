@@ -60,7 +60,7 @@ end)
 
 
 -- ============================================================
--- Lupin Generator + Monster Evasion System
+-- Lupin Generator + Monster Evasion System (PRO NOCLIP)
 -- ============================================================
 
 local PathfindingService = game:GetService("PathfindingService")
@@ -78,6 +78,7 @@ local TP_COOLDOWN = 1
 local FIRE_COOLDOWN = 0.3
 local BUSY_TIMEOUT = 15
 local NOCLIP_CHECK_INTERVAL = 0.1
+local NOCLIP_SPEED = 25
 
 -- =========================
 -- STATE
@@ -183,18 +184,18 @@ local function isMonsterChasingMe()
 end
 
 -- =========================
--- NOCLIP ESCAPE SYSTEM
+-- PRO NOCLIP SYSTEM
 -- =========================
-local function enableNoclip()
+local function enableProNoclip()
     if noclipActive then return end
     noclipActive = true
 
     local char, _, root = getCharacter()
-    if not char then return end
+    if not char or not root then return end
 
-    print("🚀 Noclip เปิด -> วิ่งเข้าไปในกำแพง")
+    print("🚀 PRO NOCLIP เปิด")
 
-    -- เก็บ CanCollide เดิม
+    -- ปิด CanCollide ทั้งตัว
     noclipParts = {}
     for _, part in pairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
@@ -202,13 +203,30 @@ local function enableNoclip()
             part.CanCollide = false
         end
     end
+
+    -- ใส่ BodyVelocity ให้ root
+    if not root:FindFirstChild("NoclipVelocity") then
+        local bodyVel = Instance.new("BodyVelocity")
+        bodyVel.Name = "NoclipVelocity"
+        bodyVel.Velocity = Vector3.zero
+        bodyVel.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bodyVel.Parent = root
+    end
 end
 
-local function disableNoclip()
+local function disableProNoclip()
     if not noclipActive then return end
     noclipActive = false
 
-    print("✅ Noclip ปิด -> กลับสู่ปกติ")
+    print("✅ PRO NOCLIP ปิด")
+
+    local char, _, root = getCharacter()
+
+    -- ลบ BodyVelocity
+    if root then
+        local bodyVel = root:FindFirstChild("NoclipVelocity")
+        if bodyVel then bodyVel:Destroy() end
+    end
 
     -- คืนค่า CanCollide
     for part, canCollide in pairs(noclipParts) do
@@ -219,8 +237,8 @@ local function disableNoclip()
     noclipParts = {}
 end
 
--- หนีเข้าไปในกำแพง
-local function escapeIntoWall()
+-- หนีเข้าไปในกำแพง (Pro Version)
+local function escapeIntoWallPro()
     local char, humanoid, root = getCharacter()
     if not char or not root or not humanoid then
         return
@@ -233,40 +251,40 @@ local function escapeIntoWall()
 
     print("⚠️ มอนไล่มา! ระยะ:", dist, "-> หนีเข้าไปในกำแพง")
 
-    enableNoclip()
+    enableProNoclip()
 
-    -- เดินสวนทางมอน
     local myPos = root.Position
     local monRoot = monster:FindFirstChild("HumanoidRootPart")
+
+    local escapeDir = Vector3.new(0, 0, 1)
     if monRoot then
-        local dirAway = (myPos - monRoot.Position).Unit
-        
-        -- เดิน/เคลื่อนเข้าไปในกำแพง (หรือสุ่มทิศ)
-        local escapePos = myPos + dirAway * 50
-        humanoid:MoveTo(escapePos)
+        escapeDir = (myPos - monRoot.Position).Unit
     end
 
-    -- เช็คจนกว่าไม่มีมอนไล่
+    local safeTime = 0
+    local safeThreshold = 2
+
     while noclipActive do
         task.wait(NOCLIP_CHECK_INTERVAL)
 
         local isChasingNow, _, distNow = isMonsterChasingMe()
 
-        -- ถ้ามอนไปไกลกว่า THREAT_DISTANCE → ออกจากกำแพง
         if not isChasingNow or distNow > THREAT_DISTANCE then
-            print("✅ มอนไปไกลแล้ว -> ออกจากกำแพง")
-            disableNoclip()
+            safeTime = safeTime + NOCLIP_CHECK_INTERVAL
+        else
+            safeTime = 0
+        end
+
+        if safeTime >= safeThreshold then
+            print("✅ ปลอดภัย " .. safeThreshold .. "วิแล้ว -> ออกจากกำแพง")
+            disableProNoclip()
             return
         end
 
-        -- ยังคงเดินต่อ
-        local char2, humanoid2, root2 = getCharacter()
-        if char2 and humanoid2 and root2 then
-            local monRoot2 = monster:FindFirstChild("HumanoidRootPart")
-            if monRoot2 then
-                local dirAway2 = (root2.Position - monRoot2.Position).Unit
-                local escapePos2 = root2.Position + dirAway2 * 2
-                humanoid2:MoveTo(escapePos2)
+        if root then
+            local bodyVel = root:FindFirstChild("NoclipVelocity")
+            if bodyVel then
+                bodyVel.Velocity = escapeDir * NOCLIP_SPEED
             end
         end
     end
@@ -422,7 +440,7 @@ local function moveToTarget(target, label)
         print("⚠️ มอนมาแล้ว! ปล่อย + หนี")
         stopInteracting(currentTarget)
         isEvading = true
-        escapeIntoWall()
+        escapeIntoWallPro()
         isEvading = false
         return "threat"
     end
@@ -460,7 +478,7 @@ local function moveToTarget(target, label)
             print("⚠️ มอนตามมากลางทาง! ปล่อย + หนี")
             stopInteracting(currentTarget)
             isEvading = true
-            escapeIntoWall()
+            escapeIntoWallPro()
             isEvading = false
             return "threat"
         end
@@ -505,7 +523,7 @@ local function moveToTarget(target, label)
                 print("⚠️ มอนตามมา -> หยุด + หนี")
                 stopInteracting(currentTarget)
                 isEvading = true
-                escapeIntoWall()
+                escapeIntoWallPro()
                 isEvading = false
                 return "threat"
             end
@@ -563,7 +581,7 @@ local function fireGeneratorPrompt(generator)
     if isChasingNow then
         print("⚠️ มอนมา -> หยุด fire + หนี")
         isEvading = true
-        escapeIntoWall()
+        escapeIntoWallPro()
         isEvading = false
         return false
     end
@@ -699,7 +717,7 @@ while true do
                 print("⚠️ มอนมา -> หยุด fire + หนี")
                 stopInteracting(generator)
                 isEvading = true
-                escapeIntoWall()
+                escapeIntoWallPro()
                 isEvading = false
                 break
             end
