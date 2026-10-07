@@ -1,3 +1,64 @@
+local function killAC(char)
+    local Humanoid = char:WaitForChild("Humanoid", 10)
+    local HRP = char:WaitForChild("HumanoidRootPart", 10)
+    if not Humanoid or not HRP then return end
+
+    local killed = 0
+
+    for _, sig in ipairs({
+        Humanoid:GetPropertyChangedSignal("WalkSpeed"),
+        Humanoid:GetPropertyChangedSignal("HipHeight"),
+        HRP:GetPropertyChangedSignal("CanCollide"),
+    }) do
+        local ok, conns = pcall(getconnections, sig)
+        if ok then
+            for _, c in ipairs(conns) do
+                if pcall(function() c:Disable() end) then killed = killed + 1 end
+            end
+        end
+    end
+
+    local ok, conns = pcall(getconnections, char.DescendantAdded)
+    if ok then
+        for _, c in ipairs(conns) do
+            local fn = c.Function
+            local consts = {}
+            pcall(function()
+                local k = debug.getconstants(fn)
+                if k then for _, v in pairs(k) do if type(v) == "string" then table.insert(consts, v) end end end
+            end)
+            local isAC = false
+            for _, v in ipairs(consts) do
+                if v == "BodyGyro" or v == "BodyVelocity" then isAC = true end
+            end
+            if isAC then
+                if pcall(function() c:Disable() end) then killed = killed + 1 end
+            else
+                pcall(function() c:Enable() end)
+            end
+        end
+    end
+    print(("[AC-kill] %d killed"):format(killed))
+
+end
+
+local LocalPlayer = game.Players.LocalPlayer
+
+if LocalPlayer.Character then
+
+    killAC(LocalPlayer.Character)
+
+end
+
+getgenv()._acKillConn = LocalPlayer.CharacterAdded:Connect(function(c)
+
+    task.wait(1)
+
+    killAC(c)
+
+end)
+
+
 -- ============================================================
 -- Lupin Generator + Monster Evasion System
 -- ============================================================
