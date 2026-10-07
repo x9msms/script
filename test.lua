@@ -71,9 +71,9 @@ local THREAT_DISTANCE        = 45
 local TP_COOLDOWN            = 1
 local FIRE_COOLDOWN          = 0.3
 local BUSY_TIMEOUT           = 15
-local HIDE_CHECK_INTERVAL    = 0.15
-local WALL_PENETRATION_SPEED = 20
-local NOCLIP_SPEED           = 40
+local HIDE_CHECK_INTERVAL    = 0.01
+local WALL_PENETRATION_SPEED = 30
+local NOCLIP_SPEED           = 30
 local NOCLIP_ARRIVE_DIST     = 8
 local NOCLIP_TICK            = 0.1
 
